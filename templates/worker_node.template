@@ -1,0 +1,389 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Example worker node server stack",
+
+  "Parameters" : {
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "VpcId" : {
+      "Type" : "String",
+      "Description" : "VpcId of the vpc where we are launching the worker node"
+    },
+
+    "InternalSshSecurityGroupId" : {
+      "Type" : "String",
+      "Description" : "Security group to allow internal ssh access"
+    },
+
+    "PrivateSubnets" : {
+      "Description" : "The private subnets where the worker-node instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "ApiServerLoadBalancerDns" : {
+      "Description" : "The private api-server's DNS name",
+      "Type" : "String"
+    },
+
+    "AZs" : {
+      "Description" : "The AZs where the worker node instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "DesiredCapacity": {
+      "Default" : "1",
+      "Type": "Number",
+      "MinValue": "1",
+      "MaxValue": "1",
+      "Description" : "Desired capacity for worker node autoscaling group"
+    },
+
+    "InstanceType" : {
+      "Description" : "Instance type",
+      "Type" : "String",
+      "Default" : "m2.xlarge",
+      "AllowedValues" : [ "m2.xlarge"],
+      "ConstraintDescription" : "must be a valid and allowed EC2 instance type."
+    },
+
+    "FileImportVersion" : {
+      "Type" : "String",
+      "Description" : "Version of file-import to deploy"
+    },
+
+    "EmailProcessingVersion" : {
+      "Type" : "String",
+      "Description" : "Version of email processing to deploy"
+    },
+
+    "Environment" : {
+      "Type" : "String",
+      "Description" : "Environment the worker node runs in"
+    }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "m2.xlarge"   : { "Arch" : "64" }
+    },
+
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "64" : "ami-0568456c" },
+      "us-west-2"      : { "64" : "ami-927613a2" },
+      "us-west-1"      : { "64" : "ami-c08dbc85" }
+    }
+  },
+
+  "Resources" : {
+    "WorkerNodeGroup" : {
+      "Type" : "AWS::AutoScaling::AutoScalingGroup",
+      "Properties" : {
+        "AvailabilityZones" : { "Ref" : "AZs" },
+        "VPCZoneIdentifier" : { "Ref" : "PrivateSubnets" },
+        "LaunchConfigurationName" : { "Ref" : "LaunchConfig" },
+        "MinSize" : "1",
+        "MaxSize" : "2",
+        "DesiredCapacity" : { "Ref" : "DesiredCapacity" }
+      }
+    },
+
+    "DeploymentInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ "worker-node" ]
+      }
+    },
+
+    "LaunchConfig" : {
+      "Type" : "AWS::AutoScaling::LaunchConfiguration",
+       "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+            "bootstrap" : ["machine", "email-processing-source", "file-import-source", "application"]
+          },
+          "machine" : {
+            "packages": {
+              "apt" : {
+                "build-essential" : [],
+                "wget"            : [],
+                "ssl-cert"        : [],
+                "git"             : [],
+                "rsyslog-gnutls"  : []
+              }
+            },
+            "commands" : {
+              "a-restart-rsyslog" : {
+                "command" : "service rsyslog restart"
+              },
+              "b-install-node" : {
+                "command" : "tar --strip-components 1 -xzf /tmp/node-v0.10.24-linux-x64.tar.gz",
+                "cwd" : "/usr/local"
+              },
+              "c-disable-github-host-check" : {
+                "command" : "(sudo -u ubuntu ssh -o StrictHostKeyChecking=no git@github.com && ssh -o StrictHostKeyChecking=no git@github.com) || true"
+              }
+            },
+            "files" : {
+              "/etc/rsyslog.d/30-logentries.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "$ModLoad imfile   # Load the imfile input module\n",
+                  "$ModLoad imklog   # for reading kernel log messages\n",
+                  "$ModLoad imuxsock # for reading local syslog messages\n",
+
+                  "$FileOwner syslog\n",
+                  "$FileGroup adm\n",
+                  "$FileCreateMode 0640\n",
+                  "$DirCreateMode 0755\n",
+                  "$Umask 0022\n",
+                  "$PrivDropToUser syslog\n",
+                  "$PrivDropToGroup adm\n",
+
+                  "$InputFileName /var/log/file-import.log\n",
+                  "$InputFileTag file-import:\n",
+                  "$InputFileStateFile file-import\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/email-processing.log\n",
+                  "$InputFileTag email-processing:\n",
+                  "$InputFileStateFile email-processing\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/redis/redis-server.log\n",
+                  "$InputFileTag redis:\n",
+                  "$InputFileStateFile redis\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/cloud-init.log\n",
+                  "$InputFileTag cloud-init:\n",
+                  "$InputFileStateFile cloud-init\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/cfn-init.log\n",
+                  "$InputFileTag cfn-init:\n",
+                  "$InputFileStateFile cfn-init\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/auth.log\n",
+                  "$InputFileTag auth:\n",
+                  "$InputFileStateFile state-auth\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFilePollInterval 1\n",
+                  "\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/tmp/node-v0.10.24-linux-x64.tar.gz" : {
+                "source"        : "http://nodejs.org/dist/v0.10.24/node-v0.10.24-linux-x64.tar.gz",
+                "mode"          : "000644",
+                "owner"         : "root",
+                "group"         : "root"
+              }
+            }
+          },
+          "email-processing-source" : {
+            "sources" : {
+              "/var/deployments" : {"Fn::Join" : ["", ["https://DEPLOYMENT-BUCKET.s3.amazonaws.com/email-processing/email-processing-", { "Ref" : "EmailProcessingVersion" }, ".tar.gz"]] }
+            }
+          },
+          "file-import-source" : {
+            "sources" : {
+              "/var/deployments" : {"Fn::Join" : ["", ["https://DEPLOYMENT-BUCKET.s3.amazonaws.com/file-import/file-import-", { "Ref" : "FileImportVersion" }, ".tar.gz"]] }
+            }
+          },
+          "application" : {
+            "packages" : {
+              "apt" : {
+                "cpanminus"       : [],
+                "wamerican"       : [],
+                "redis-server"    : ["2:2.8.*"],
+                "postgresql-8.4"  : [],
+                "libfontconfig"   : []
+              }
+            },
+            "commands" : {
+              "a-correct-permissions" : {
+                "command" : "chmod 664 /var/log/redis/redis-server.log"
+              },
+              "b-install-xls2csv" : {
+                "command" : "cpanm  --mirror http://httpupdate15.cpanel.net/CPAN/ K/KE/KEN/xls2csv-1.07.tar.gz"
+              },
+              "c-start-file-import" : {
+                "command" : "start file-import"
+              },
+              "d-start-email-processing" : {
+                "command" : "start email-processing"
+              }
+            },
+            "files" : {
+              "/etc/init/email-processing.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "#!upstart\n",
+
+                  "description \"email-processing\"\n",
+                  "author      \"Ben Blair\"\n",
+
+                  "start on (local-filesystems and net-device-up IFACE=eth0)\n",
+                  "stop on shutdown\n",
+
+                  "respawn\n",
+                  "# respawn limit 10 60\n",
+
+                  { "Fn::Join" : ["", ["env NODE_ENV=", { "Ref" : "Environment" }, "\n"]] },
+                  { "Fn::Join" : ["", ["env AWS_REGION=", { "Ref" : "AWS::Region" }, "\n"]]},
+                  { "Fn::Join" : ["", ["env AWS_DEFAULT_REGION=", { "Ref" : "AWS::Region" }, "\n"]]},
+
+                  { "Fn::Join" : ["", ["env API_HOSTNAME=", { "Ref" : "ApiServerLoadBalancerDns" }, "\n"] ] },
+                  "env API_PORT=80\n",
+                  "env DEPLOYED=true\n",
+
+                  "export NODE_ENV\n",
+                  "export AWS_REGION\n",
+                  "export AWS_DEFAULT_REGION\n",
+                  "export API_HOSTNAME\n",
+                  "export API_PORT\n",
+                  "export DEPLOYED\n",
+
+                  { "Fn::Join" : ["",  ["chdir /var/deployments/email-processing-", { "Ref" : "EmailProcessingVersion" }, "\n"]]},
+
+                  "script\n",
+                  { "Fn::Join" : ["",  ["  exec node /var/deployments/email-processing-", { "Ref" : "EmailProcessingVersion" }, "/server.js >> /var/log/email-processing.log 2>&1\n"]]},
+                  "end script\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/etc/init/file-import.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "#!upstart\n",
+
+                  "description \"file-import\"\n",
+                  "author      \"Ben Blair\"\n",
+
+                  "start on (local-filesystems and net-device-up IFACE=eth0)\n",
+                  "stop on shutdown\n",
+
+                  "respawn\n",
+                  "# respawn limit 10 60\n",
+
+                  { "Fn::Join" : ["", ["env NODE_ENV=", { "Ref" : "Environment" }, "\n"]] },
+                  { "Fn::Join" : ["", ["env AWS_REGION=", { "Ref" : "AWS::Region" }, "\n"]]},
+                  { "Fn::Join" : ["", ["env AWS_DEFAULT_REGION=", { "Ref" : "AWS::Region" }, "\n"]]},
+
+                  { "Fn::Join" : ["", ["env API_HOSTNAME=", { "Ref" : "ApiServerLoadBalancerDns" }, "\n"] ] },
+                  "env API_PORT=80\n",
+                  "env DEPLOYED=true\n",
+
+                  "export NODE_ENV\n",
+                  "export AWS_REGION\n",
+                  "export AWS_DEFAULT_REGION\n",
+                  "export API_HOSTNAME\n",
+                  "export API_PORT\n",
+                  "export DEPLOYED\n",
+
+                  { "Fn::Join" : ["",  ["chdir /var/deployments/file-import-", { "Ref" : "FileImportVersion" }, "\n"]]},
+
+                  "script\n",
+                  { "Fn::Join" : ["",  ["  exec node /var/deployments/file-import-", { "Ref" : "FileImportVersion" }, "/server.js >> /var/log/file-import.log 2>&1\n"]]},
+                  "end script\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            }
+          }
+        },
+
+        "AWS::CloudFormation::Authentication" : {
+          "S3AccessCreds" : {
+            "type" : "S3",
+            "roleName" : "worker-node",
+            "buckets" : [ "DEPLOYMENT-BUCKET" ]
+          }
+        }
+      },
+      "Properties" : {
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" },
+                                          "Arch" ] } ] },
+        "KeyName"  : { "Ref" : "KeyName" },
+        "SecurityGroups" : [ { "Ref" : "InstanceSecurityGroup" }, { "Ref" : "InternalSshSecurityGroupId" } ],
+        "InstanceType" : { "Ref" : "InstanceType" },
+        "IamInstanceProfile" : { "Ref" : "DeploymentInstanceProfile" },
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash\n",
+          "# Add additional apt sources\n",
+          "add-apt-repository -y ppa:chris-lea/redis-server\n",
+
+          "# Bootstrap Amazon's cfn-init tools\n",
+          "apt-get update\n",
+          "apt-get -y install python-setuptools\n",
+          "wget -P /tmp https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz","\n",
+          "mkdir -p /tmp/aws-cfn-bootstrap-latest","\n",
+          "tar xvfz /tmp/aws-cfn-bootstrap-latest.tar.gz --strip-components=1 -C /tmp/aws-cfn-bootstrap-latest","\n",
+          "easy_install /tmp/aws-cfn-bootstrap-latest/","\n",
+
+          "function error_exit\n",
+          "{\n",
+          "  /usr/local/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+          "  exit 1\n",
+          "}\n",
+
+          "/usr/local/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r LaunchConfig -c bootstrap ",
+          "         --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to initialize CloudFormation init scripts'\n",
+
+          "/usr/local/bin/cfn-signal -e $? '", { "Ref" : "WaitHandle" }, "'\n" ]]}
+        }
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "WorkerNodeGroup",
+      "Properties" : {
+        "Handle"  : { "Ref" : "WaitHandle" },
+        "Count"   : { "Ref" : "DesiredCapacity" },
+        "Timeout" : "600"
+      }
+    },
+
+    "InstanceSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "No inbound access",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ ]
+      }
+    }
+  },
+
+  "Outputs" : {
+    "AutoScalingGroup" : {
+      "Description": "worker-node's auto scaling group",
+      "Value": { "Ref" : "WorkerNodeGroup" }
+    }
+  }
+}

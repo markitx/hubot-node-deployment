@@ -1,0 +1,475 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Example load balancers",
+
+  "Parameters" : {
+    "VpcId" : {
+      "Type" : "String",
+      "Description" : "VpcId of the vpc we are launching this load balancer in"
+    },
+
+    "PublicSubnets" : {
+      "Description" : "The public subnets that have access to the private subnets where instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "PrivateSubnets" : {
+      "Description" : "The public subnets that have access to the private subnets where instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "EIP1" : {
+      "Description" : "Elastic IP of the NAT device in the first subnet",
+      "Type" : "String"
+    },
+
+    "EIP2" : {
+      "Description" : "Elastic IP of the NAT device in the second subnet",
+      "Type" : "String"
+    },
+
+    "NATSecurityGroupId" : {
+      "Description" : "SecurityGroupId of the NAT",
+      "Type" : "String"
+    },
+
+    "Environment" : {
+      "Description" : "Environment these load balancers are running in",
+      "Type" : "String"
+    }
+  },
+
+  "Mappings" : {
+  },
+
+  "Conditions" : {
+    "LockDownProductionEnvironment" : { "Fn::Equals" : [ {"Ref" : "Environment"}, "production"] }
+  },
+
+  "Resources" : {
+
+    "WebappLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["webapp", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "PublicLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PublicSubnets" },
+        "CrossZone": false,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "AppCookieStickinessPolicy" : 
+          [ {
+            "PolicyName" : "HTTPSCookieStickinessPolicy",
+            "CookieName" : "connect.sid"
+          } ],
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort" : "80",
+            "InstancePort" : "80",
+            "Protocol" : "HTTP"
+          },
+          {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "8080",
+            "Protocol" : "HTTPS",
+            "PolicyNames" : [ "HTTPSCookieStickinessPolicy" ],
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          },
+          {
+            "LoadBalancerPort": "2950",
+            "InstancePort" : "8080",
+            "InstanceProtocol": "TCP",
+            "Protocol" : "SSL",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:8080", "/status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+    "WebappQaLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["webapp-qa", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "PublicLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PublicSubnets" },
+        "CrossZone": false,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "AppCookieStickinessPolicy" : 
+          [ {
+            "PolicyName" : "HTTPSCookieStickinessPolicy",
+            "CookieName" : "connect.sid"
+          } ],
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort" : "80",
+            "InstancePort" : "80",
+            "Protocol" : "HTTP"
+          },
+          {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "8080",
+            "Protocol" : "HTTPS",
+            "PolicyNames" : [ "HTTPSCookieStickinessPolicy" ],
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          },
+          {
+            "LoadBalancerPort": "2950",
+            "InstancePort" : "8080",
+            "InstanceProtocol": "TCP",
+            "Protocol" : "SSL",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          }  ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:8080", "/status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+    "PublicApiServerLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["api", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "PublicLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PrivateSubnets" },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "Scheme" : "internal",
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort" : "80",
+            "InstancePort" : "80",
+            "Protocol" : "HTTP"
+          },
+          {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "80",
+            "Protocol" : "HTTPS",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:80", "/status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+    "ElasticSearchLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["elastic-search", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "ElasticSearchLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PublicSubnets" },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort" : "9200",
+            "InstancePort" : "9200",
+            "Protocol" : "HTTP"
+          },
+          {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "9200",
+            "Protocol" : "HTTPS",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:9200", "/_status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+    "MarvelLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["marvel", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "MarvelLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PublicSubnets" },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort" : "9200",
+            "InstancePort" : "9200",
+            "Protocol" : "HTTP"
+          },
+          {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "9200",
+            "Protocol" : "HTTPS",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:9200", "/_status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+    "HubotLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["hubot", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "PublicLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PublicSubnets" },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "Listeners" : 
+          [ {
+            "LoadBalancerPort": "443",
+            "InstancePort" : "5555",
+            "Protocol" : "HTTPS",
+            "SSLCertificateId" : "arn:aws:iam::ACCOUNT-ID:server-certificate/SSL-CERT-NAME"
+          } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:5555", "/hubot/version"]]},
+          "HealthyThreshold" : "3",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "6",
+          "Timeout" : "5"
+        }
+      }
+    },
+
+    "ApiServerLoadBalancer" : {
+      "Type" : "AWS::ElasticLoadBalancing::LoadBalancer",
+      "Properties" : {
+        "LoadBalancerName" : {"Fn::Join" : ["-", ["api-server", { "Ref" : "VpcId" } ]]},
+        "SecurityGroups" : [ { "Ref" : "ApiServerLoadBalancerSecurityGroup" } ],
+        "Subnets" : { "Ref" : "PrivateSubnets" },
+        "CrossZone": true,
+        "ConnectionDrainingPolicy": { "Enabled": true, "Timeout": 15 },
+        "Scheme" : "internal",
+        "Listeners" : [ {
+          "LoadBalancerPort" : "80",
+          "InstancePort" : "80",
+          "Protocol" : "HTTP"
+        } ],
+        "HealthCheck" : {
+          "Target" : { "Fn::Join" : [ "", ["HTTP:", "80", "/status"]]},
+          "HealthyThreshold" : "5",
+          "UnhealthyThreshold" : "3",
+          "Interval" : "30",
+          "Timeout" : "5"
+        }
+      }
+    },
+
+    "ApiServerLoadBalancerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access on port 80",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "80",
+          "ToPort" : "80",
+          "CidrIp" : "0.0.0.0/0"
+        } ],
+        "SecurityGroupEgress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "80",
+          "ToPort" : "80",
+          "CidrIp" : "0.0.0.0/0"
+        } ]
+      }
+    },
+
+    "PublicLoadBalancerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP/HTTPS access on port 80/443 to 80/8080",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "80",
+          "ToPort" : "80",
+          "CidrIp" : "0.0.0.0/0"
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "443",
+          "ToPort" : "443",
+          "CidrIp" : "0.0.0.0/0"
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "2950",
+          "ToPort" : "2950",
+          "CidrIp" : "0.0.0.0/0"
+        }  ],
+        "SecurityGroupEgress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "80",
+          "ToPort" : "80",
+          "CidrIp" : "0.0.0.0/0"
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "8080",
+          "ToPort" : "8080",
+          "CidrIp" : "0.0.0.0/0"
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "5555",
+          "ToPort" : "5555",
+          "CidrIp" : "0.0.0.0/0"
+        } ]
+      }
+    },
+
+    "ElasticSearchLoadBalancerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTPS access on port 443 to 9200",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "443",
+          "ToPort" : "443",
+          "CidrIp" : { "Fn::If" : [ "LockDownProductionEnvironment", "10.0.0.0/8", "0.0.0.0/0"] }
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : { "Fn::Join" : ["", [{ "Ref" : "EIP1" }, "/32"]] }
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : { "Fn::Join" : ["", [{ "Ref" : "EIP2" }, "/32"]] }
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "SourceSecurityGroupId" : { "Ref" : "NATSecurityGroupId" }
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : "10.0.0.0/8"
+        } ],
+        "SecurityGroupEgress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : "0.0.0.0/0"
+        } ]
+      }
+    },
+    "MarvelLoadBalancerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTPS access on port 443 to 9200",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : { "Fn::Join" : ["", [{ "Ref" : "EIP1" }, "/32"]] }
+        },
+        { 
+          "IpProtocol" : "tcp",
+          "FromPort" : "9200",
+          "ToPort" : "9200",
+          "CidrIp" : { "Fn::Join" : ["", [{ "Ref" : "EIP2" }, "/32"]] }
+        }]
+      }
+    }
+  },
+
+  "Outputs" : {
+    "WebappLoadBalancer" : {
+      "Description": "webapp load balancer",
+      "Value": { "Ref" : "WebappLoadBalancer" }
+    },
+    "WebappLoadBalancerDns" : {
+      "Description": "webapp load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["WebappLoadBalancer", "DNSName"] }
+    },
+    "WebappQaLoadBalancer" : {
+      "Description": "webapp load balancer",
+      "Value": { "Ref" : "WebappQaLoadBalancer" }
+    },
+    "WebappQaLoadBalancerDns" : {
+      "Description": "webapp load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["WebappQaLoadBalancer", "DNSName"] }
+    },
+    "HubotLoadBalancer" : {
+      "Description" : "hubot load balancer",
+      "Value" :  { "Ref" : "HubotLoadBalancer" }
+    },
+    "HubotLoadBalancerDns" : {
+      "Description": "hubot load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["HubotLoadBalancer", "DNSName"] }
+    },
+    "PublicApiServerLoadBalancer" : {
+      "Description" : "public api load balancer",
+      "Value" :  { "Ref" : "PublicApiServerLoadBalancer" }
+    },
+    "PublicApiServerLoadBalancerDns" : {
+      "Description": "public-api-server load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["PublicApiServerLoadBalancer", "DNSName"] }
+    },
+    "ElasticSearchLoadBalancer" : {
+      "Description" : "elastic search load balancer",
+      "Value" :  { "Ref" : "ElasticSearchLoadBalancer" }
+    },
+    "ElasticSearchLoadBalancerDns" : {
+      "Description": "elastic search load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["ElasticSearchLoadBalancer", "DNSName"] }
+    },
+    "MarvelLoadBalancer" : {
+      "Description" : "marvel load balancer",
+      "Value" :  { "Ref" : "MarvelLoadBalancer" }
+    },
+    "MarvelLoadBalancerDns" : {
+      "Description": "marvel load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["MarvelLoadBalancer", "DNSName"] }
+    },
+    "ApiServerLoadBalancer" : {
+      "Description" : "private api load balancer",
+      "Value" :  { "Ref" : "ApiServerLoadBalancer" }
+    },
+    "ApiServerLoadBalancerDns" : {
+      "Description": "api-server load balancer DNS",
+      "Value": { "Fn::GetAtt" : ["ApiServerLoadBalancer", "DNSName"] }
+    },
+    "ApiServerLoadBalancerSecurityGroup" : {
+      "Description" : "private api load balancer security group",
+      "Value" :  { "Ref" : "ApiServerLoadBalancerSecurityGroup" }
+    },
+    "PublicLoadBalancerSecurityGroup" : {
+      "Description" : "security group for webapp and public api load balancers",
+      "Value" :  { "Ref" : "PublicLoadBalancerSecurityGroup" }
+    },
+    "ElasticSearchLoadBalancerSecurityGroup" : {
+      "Description" : "security group for elastic search load balancers",
+      "Value" :  { "Ref" : "ElasticSearchLoadBalancerSecurityGroup" }
+    },
+    "MarvelLoadBalancerSecurityGroup" : {
+      "Description" : "security group for marvel load balancers",
+      "Value" : { "Ref" : "MarvelLoadBalancerSecurityGroup"}
+    }
+  }
+}

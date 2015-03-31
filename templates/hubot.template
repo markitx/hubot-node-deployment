@@ -1,0 +1,357 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Example hubot stack",
+
+  "Parameters" : {
+    "KeyName" : {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type" : "String",
+      "MinLength": "1",
+      "MaxLength": "64",
+      "AllowedPattern" : "[-_ a-zA-Z0-9]*",
+      "ConstraintDescription" : "can contain only alphanumeric characters, spaces, dashes and underscores."
+    },
+
+    "VpcId" : {
+      "Type" : "String",
+      "Description" : "VpcId of the vpc where we are launching hubot"
+    },
+
+    "InternalSshSecurityGroupId" : {
+      "Type" : "String",
+      "Description" : "Security group to allow internal ssh access"
+    },
+
+    "PrivateSubnets" : {
+      "Description" : "The private subnets where the hubot instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "HubotLoadBalancer" : {
+      "Description" : "The load balancer for the hubot instance",
+      "Type" : "String"
+    },
+
+    "PublicLoadBalancerSecurityGroup" : {
+      "Description" : "The security group for all public load balancers",
+      "Type" : "String"
+    },
+
+    "AZs" : {
+      "Description" : "The AZs where the hubot instances live",
+      "Type" : "CommaDelimitedList"
+    },
+
+    "DesiredCapacity": {
+      "Default" : "1",
+      "Type": "Number",
+      "MinValue": "1",
+      "MaxValue": "1",
+      "Description" : "Desired capacity for hubot's autoscaling group"
+    },
+
+    "InstanceType" : {
+      "Description" : "Instance type",
+      "Type" : "String",
+      "Default" : "m3.medium",
+      "AllowedValues" : [ "m3.medium" ],
+      "ConstraintDescription" : "must be a valid and allowed EC2 instance type."
+    },
+
+    "HubotVersion" : {
+      "Type" : "String",
+      "Description" : "Version of hubot to deploy"
+    },
+
+    "Environment" : {
+      "Type" : "String",
+      "Description" : "Environment the hubot runs in"
+    }
+  },
+
+  "Conditions" : {
+    "RunAsProduct" : { "Fn::Equals" : [ {"Ref" : "Environment"}, "production"] }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "m3.medium"   : { "Arch" : "64" }
+    },
+
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "64" : "ami-0568456c" },
+      "us-west-2"      : { "64" : "ami-927613a2" },
+      "us-west-1"      : { "64" : "ami-c08dbc85" }
+    }
+  },
+
+  "Resources" : {
+    "HubotGroup" : {
+      "Type" : "AWS::AutoScaling::AutoScalingGroup",
+      "Properties" : {
+        "AvailabilityZones" : { "Ref" : "AZs" },
+        "VPCZoneIdentifier" : { "Ref" : "PrivateSubnets" },
+        "LaunchConfigurationName" : { "Ref" : "LaunchConfig" },
+        "MinSize" : "1",
+        "MaxSize" : "1",
+        "DesiredCapacity" : { "Ref" : "DesiredCapacity" },
+        "LoadBalancerNames" : [ { "Ref" : "HubotLoadBalancer" } ],
+        "Tags" : [ { "Key" : "TerminateInstancesOnNewVersion", "Value" : "true", "PropagateAtLaunch" : "true" }]
+      }
+    },
+
+    "DeploymentInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "Path": "/",
+        "Roles": [ "hubot" ]
+      }
+    },
+
+    "LaunchConfig" : {
+      "Type" : "AWS::AutoScaling::LaunchConfiguration",
+      "Metadata" : {
+        "AWS::CloudFormation::Init" : {
+          "configSets" : {
+            "bootstrap" : ["machine","application"]
+          },
+          "machine" : {
+            "packages": {
+              "apt" : {
+                "build-essential" : [],
+                "wget"            : [],
+                "ssl-cert"        : [],
+                "git"             : [],
+                "rsyslog-gnutls"  : []
+              }
+            },
+            "commands" : {
+              "a-restart-rsyslog" : {
+                "command" : "service rsyslog restart"
+              },
+              "b-install-node" : {
+                "command" : "tar --strip-components 1 -xzf /tmp/node-v0.10.24-linux-x64.tar.gz",
+                "cwd" : "/usr/local"
+              },
+              "c-disable-github-host-check" : {
+                "command" : "(sudo -u ubuntu ssh -o StrictHostKeyChecking=no git@github.com && ssh -o StrictHostKeyChecking=no git@github.com) || true"
+              }
+            },
+            "files" : {
+              "/etc/rsyslog.d/30-logentries.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "$ModLoad imfile   # Load the imfile input module\n",
+                  "$ModLoad imklog   # for reading kernel log messages\n",
+                  "$ModLoad imuxsock # for reading local syslog messages\n",
+
+                  "$FileOwner syslog\n",
+                  "$FileGroup adm\n",
+                  "$FileCreateMode 0640\n",
+                  "$DirCreateMode 0755\n",
+                  "$Umask 0022\n",
+                  "$PrivDropToUser syslog\n",
+                  "$PrivDropToGroup adm\n",
+
+                  "$InputFileName /var/log/hubot.log\n",
+                  "$InputFileTag hubot:\n",
+                  "$InputFileStateFile hubot\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/redis/redis-server.log\n",
+                  "$InputFileTag redis:\n",
+                  "$InputFileStateFile redis\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/cloud-init.log\n",
+                  "$InputFileTag cloud-init:\n",
+                  "$InputFileStateFile cloud-init\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/cfn-init.log\n",
+                  "$InputFileTag cfn-init:\n",
+                  "$InputFileStateFile cfn-init\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFileName /var/log/auth.log\n",
+                  "$InputFileTag auth:\n",
+                  "$InputFileStateFile state-auth\n",
+                  "$InputFileSeverity info\n",
+                  "$InputRunFileMonitor\n",
+
+                  "$InputFilePollInterval 1\n",
+
+                  "\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/tmp/node-v0.10.24-linux-x64.tar.gz" : {
+                "source"        : "http://nodejs.org/dist/v0.10.24/node-v0.10.24-linux-x64.tar.gz",
+                "mode"          : "000644",
+                "owner"         : "root",
+                "group"         : "root"
+              }
+            }
+          },
+          "application" : {
+            "packages" : {
+              "apt" : {
+                "redis-server"    : ["2:2.8.*"]
+              }
+            },
+            "sources" : {
+              "/var/deployments" : {"Fn::Join" : ["", ["https://DEPLOYMENT-BUCKET.s3.amazonaws.com/hubot/hubot-", { "Ref" : "HubotVersion" }, ".tar.gz"]] }
+            },
+            "commands" : {
+              "a-correct-permissions" : {
+                "command" : "chmod 664 /var/log/redis/redis-server.log"
+              },
+              "b-start-hubot" : {
+                "command" : "start hubot"
+              }
+            },
+            "files" : {
+              "/etc/init/hubot.conf" : {
+                "content" : { "Fn::Join" : ["", [
+                  "#!upstart\n",
+
+                  "description \"Your own Hubot bot\"\n",
+                  "author      \"Dylan Lingelbach\"\n",
+
+                  "start on (local-filesystems and net-device-up IFACE=eth0)\n",
+                  "stop on shutdown\n",
+
+                  "respawn\n",
+                  "# respawn limit 5 60\n",
+
+                  "# Path to Hubot installation\n",
+                  { "Fn::Join" : [ "", ["env HUBOT_DIR='/var/deployments/hubot-", { "Ref" : "HubotVersion"} ,"/'\n"]] },
+                  "env HUBOT='bin/hubot'\n",
+                  "env ADAPTER='hipchat'\n",
+                  "# Name (and local user) to run Hubot as\n",
+                  "env HUBOT_USER='ubuntu'\n",
+                  "# httpd listen port\n",
+                  "env PORT='5555'\n",
+                  { "Fn::Join" : ["", ["env NODE_ENV=", { "Ref" : "Environment" }, "\n"]] },
+
+                  "# Hipchat-specific environment variables\n",
+                  { "Fn::Join" : ["", ["env HUBOT_HIPCHAT_JID=", { "Fn::If" : [ "RunAsProduction", "", ""] }, "\n"]] },
+                  { "Fn::Join" : ["", ["env HUBOT_HIPCHAT_PASSWORD=", { "Fn::If" : [ "RunAsProduction", "", ""] }, "\n"]] },
+
+                  "# We want our Hubot in all rooms for now so leaving blank - if running in dev restrict to certain rooms\n",
+                  { "Fn::Join" : ["", ["env HUBOT_HIPCHAT_ROOMS=", { "Fn::If" : [ "RunAsProduction", "", ""] },"\n"]] },
+
+                  "# Other services environment variables\n",
+
+                  "env HUBOT_LOG_LEVEL=\"debug\"\n",
+                  { "Fn::Join" : ["", ["env HUBOT_NAME=\"", { "Fn::If" : [ "RunAsAdam", "adam", "karl"] } ,"\"\n"]]},
+                  "env FILE_BRAIN_PATH=\"/var/deployments/hubot/brain_dump\"\n",
+
+                  "# Other environment variables\n",
+
+                  { "Fn::Join" : ["", ["env AWS_REGION=", { "Ref" : "AWS::Region" }, "\n"]]},
+                  { "Fn::Join" : ["", ["env KEY_NAME=", { "Ref" : "KeyName"}, "\n"]]},
+
+                  "export AWS_REGION\n",
+                  "export TEMPLATE_VERSION\n",
+                  "export KEY_NAME\n",
+                  "export NODE_ENV\n",
+
+                  "script\n",
+                    "exec start-stop-daemon --start --chuid ${HUBOT_USER} --chdir ${HUBOT_DIR} --exec ${HUBOT_DIR}${HUBOT} -- --name ${HUBOT_NAME} --adapter ${ADAPTER}  >> /var/log/hubot.log 2>&1\n",
+                  "end script\n"
+                ]]},
+                "mode" : "000644",
+                "owner" : "root",
+                "group" : "root"
+              }
+            }
+          }
+        },
+
+        "AWS::CloudFormation::Authentication" : {
+          "S3AccessCreds" : {
+            "type" : "S3",
+            "roleName" : "hubot",
+            "buckets" : [ "DEPLOYMENT-BUCKET" ]
+          }
+        }
+      },
+      "Properties" : {
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" },
+                                          "Arch" ] } ] },
+        "KeyName"  : { "Ref" : "KeyName" },
+        "SecurityGroups" : [ { "Ref" : "InstanceSecurityGroup" }, { "Ref" : "InternalSshSecurityGroupId" } ],
+        "InstanceType" : { "Ref" : "InstanceType" },
+        "IamInstanceProfile" : { "Ref" : "DeploymentInstanceProfile" },
+        "UserData" : { "Fn::Base64" : { "Fn::Join" : ["", [
+          "#!/bin/bash\n",
+          "# Add additional apt sources\n",
+          "add-apt-repository -y ppa:chris-lea/redis-server\n",
+
+          "# Bootstrap Amazon's cfn-init tools\n",
+          "apt-get update\n",
+          "apt-get -y install python-setuptools\n",
+          "wget -P /tmp https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz","\n",
+          "mkdir -p /tmp/aws-cfn-bootstrap-latest","\n",
+          "tar xvfz /tmp/aws-cfn-bootstrap-latest.tar.gz --strip-components=1 -C /tmp/aws-cfn-bootstrap-latest","\n",
+          "easy_install /tmp/aws-cfn-bootstrap-latest/","\n",
+
+          "function error_exit\n",
+          "{\n",
+          "  /usr/local/bin/cfn-signal -e 1 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+          "  exit 1\n",
+          "}\n",
+
+          "/usr/local/bin/cfn-init -s ", { "Ref" : "AWS::StackId" }, " -r LaunchConfig -c bootstrap ",
+          "         --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to initialize CloudFormation init scripts'\n",
+
+          "/usr/local/bin/cfn-signal -e $? '", { "Ref" : "WaitHandle" }, "'\n" ]]}
+        }
+      }
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "HubotGroup",
+      "Properties" : {
+        "Handle"  : { "Ref" : "WaitHandle" },
+        "Count"   : { "Ref" : "DesiredCapacity" },
+        "Timeout" : "600"
+      }
+    },
+
+
+    "InstanceSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access on the configured port",
+        "VpcId" : { "Ref" : "VpcId" },
+        "SecurityGroupIngress" : [ {
+          "IpProtocol" : "tcp",
+          "FromPort" : "5555",
+          "ToPort" : "5555",
+          "SourceSecurityGroupId" : { "Ref" : "PublicLoadBalancerSecurityGroup" }
+        } ]
+      }
+    }
+  },
+
+  "Outputs" : {
+    "AutoScalingGroup" : {
+      "Description": "hubot's auto scaling group",
+      "Value": { "Ref" : "HubotGroup" }
+    }
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "hubot-node-deployment",
+  "description": "Your own hubot deployment service",
+  "version": "0.1.0",
+  "author": "Dylan Lingelbach (https://github.com/dylanlingelbach)",
+  "keywords": [
+    "hubot",
+    "hubot-scripts"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/markitx/hubot-node-deployment.git"
+  },
+  "bugs": {
+    "url": "https://github.com/markitx/hubot-node-deployment/issues"
+  },
+  "dependencies": {
+    "async": "~0.2.9",
+    "aws-sdk": "~2.0.x",
+    "coffee-script": "~1.6",
+    "moment": "^2.8.3",
+    "nconf": "~0.6.7",
+    "node-uuid": ">=1.3.3",
+    "request": "~2.34.x",
+    "rimraf": "*",
+    "underscore": ">= 1.3.3"
+  },
+  "devDependencies": {
+  },
+  "main": "index.coffee",
+  "scripts": {
+  }
+}
