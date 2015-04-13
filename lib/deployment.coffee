@@ -3,6 +3,8 @@ _ = require('underscore')
 util = require('util')
 async = require('async')
 request = require('request')
+fs = require('fs')
+path = require('path')
 moment = require('moment')
 
 GithubToS3 = require('./github-to-s3')
@@ -10,11 +12,8 @@ EventListener = require('./event-listener')
 EventFilter = require('./event-filter')
 CleanupHandler = require('./cleanup-handler')
 
-templateVersion = 'current'
-
 TWENTY_FOUR_HOURS = 86400000
 
-deploymentBucket = process.env.HUBOT_DEPLOYMENT_BUCKET
 organizationName = process.env.HUBOT_DEPLOYMENT_GITHUB_ORGANIZATION
 productionKeyName = process.env.HUBOT_DEPLOYMENT_AWS_KEY_NAME
 
@@ -695,6 +694,14 @@ module.exports = class Deployment
 
         return _.pairs(paramObject).map (kvp) -> { ParameterKey: kvp[0], ParameterValue: kvp[1] }
 
+    _readValidTemplate: (template, cb) ->
+        templatePath = path.resolve(__dirname, "../templates/#{template}.template")
+        fs.readFile templatePath, (err, data) =>
+            return cb(err) if err?
+            templateBody = data.toString()
+            @cf.validateTemplate TemplateBody: templateBody, (err, data) ->
+                cb(err, data, templateBody)
+
     _getPushStatus: (appVersions, environment, setValue) ->
         appStrings = appVersions.map (av) -> getVersionString([av])+'-'+environment
         return (status) =>
@@ -758,9 +765,9 @@ module.exports = class Deployment
                         { ParameterKey: 'Environment', ParameterValue: realEnvironment } ])
                 return if @_checkCancel(appVersions, environment)
                 pushStatus("Validating Template")
-                @cf.validateTemplate TemplateURL: "https://s3.amazonaws.com/" + deploymentBucket + "/templates/#{templateVersion}/#{template}.template", (err, data) =>
+                @_readValidTemplate template, (err, data, templateBody) =>
                     if err?
-                        console.log "Error validating template #{err}"
+                        console.log "Error reading valid template #{err}"
                         cb(err, null) if cb?
                         return
 
@@ -776,12 +783,14 @@ module.exports = class Deployment
 
                     parem = {
                         StackName: "#{role}-#{versionString}-#{environment}-#{vpcId}",
-                        TemplateURL: "https://s3.amazonaws.com/" + deploymentBucket + "/templates/#{templateVersion}/#{template}.template",
+                        TemplateBody: templateBody,
                         Parameters: params,
                         NotificationARNs: [@eventListener.getSnsArn()],
                         Capabilities: ['CAPABILITY_IAM'],
                         Tags: tags }
+
                     return if @_checkCancel(appVersions, environment)
+
                     pushStatus("Creating Stack")
                     @cf.createStack parem, (err, data) =>
                             if err?
