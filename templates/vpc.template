@@ -17,7 +17,7 @@
       "Description" : "Bastion instance type",
       "Type" : "String",
       "Default" : "t2.micro",
-      "AllowedValues" : [ "t1.micro","m1.small","m1.medium","m1.large"],
+      "AllowedValues" : [ "t2.micro","t2.small","t2.medium"],
       "ConstraintDescription" : "must be a valid and allowed EC2 instance type."
     }
   },
