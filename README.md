@@ -76,5 +76,7 @@ Be sure to replace /path/to/logentries/certificate, YOUR_LOG_ENTRIES_KEY, and Ap
 
 - The first time deploying the apps on worker-node you'll need to use `deploy-multiple` to deploy both at once. After that you can deploy new versions of just one app and hubot will use the old version of the other app
 
+- The IP leasing functionality requires a DynamoDB table, development-ip-leases 
+
 ## Author
 [dylanlingelbach](https://github.com/dylanlingelbach/)
