@@ -6,7 +6,7 @@ moment = require('moment')
 
 version = require('../package.json').version
 
-EventQueue = require('./aws-utils/event-queue');
+EventQueue = require('./aws-utils/event-queue')
 
 cleanupMessageParser = (message) ->
     try 

@@ -5,7 +5,7 @@ util = require('util')
 
 version = require('../package.json').version
 
-EventQueue = require('./aws-utils/event-queue');
+EventQueue = require('./aws-utils/event-queue')
 
 cloudFormationMessageParser = (message) ->
     # Cloud formation messages can have trailing new lines
