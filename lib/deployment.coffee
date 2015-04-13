@@ -102,7 +102,7 @@ module.exports = class Deployment
 
         @_startLeaseRemovalInterval()
 
-    deploy: (environment, appName, version, token, cb) ->
+    deploy: (environment, appName, version, token, debug, cb) ->
         filter = new EventFilter(@eventListener)
 
         role = appToRole[appName]
@@ -127,7 +127,7 @@ module.exports = class Deployment
                 cb(new Error(errorMessage)) if cb?
                 return
             unless @_checkCancel([appVersion], environment)
-                @_deploy(filter, environment, [appVersion], role, token, cb)
+                @_deploy(filter, environment, [appVersion], role, token, debug, cb)
 
         @events[getVersionString([appVersion])+'-'+environment] = filter
         return filter
@@ -191,9 +191,9 @@ module.exports = class Deployment
             vpcOutput = _.find vpc.Outputs, (o) -> o.OutputKey == 'VpcId'
             vpcId = vpcOutput.OutputValue
 
-            @_enableOldVersion environment, role, vpcId, cb
+            @_enableOldVersion environment, role, vpcId, false, cb
 
-    deployMultiple: (environment, appVersions, token, cb) ->
+    deployMultiple: (environment, appVersions, token, false, cb) ->
         filter = new EventFilter(@eventListener)
 
         roles = _.groupBy(appVersions, (av) -> appToRole[av.Name])
@@ -218,7 +218,7 @@ module.exports = class Deployment
                     console.log errorMessage
                     cb(new Error(errorMessage)) if cb?
                     return
-                @_deploy(filter, environment, versions, role, token, cb)
+                @_deploy(filter, environment, versions, role, token, debug, cb)
 
         return filter
 
@@ -252,6 +252,45 @@ module.exports = class Deployment
                 Tags: tags }
 
             @_deleteStack role, parem, cb
+        return true
+
+    destroyDeploy: (environment, application, version, cb) ->
+        @_getVpcAndLoadBalancer environment, (err, vpc, lb) =>
+            if err?
+                console.log "Unable to find VPC stack: #{err}"
+                cb(err, null) if cb?
+                return
+            unless vpc?
+                console.log "Unable to find VPC stack"
+                cb('Unable to find VPC stack', null) if cb?
+                return
+
+            vpcOutput = _.find vpc.Outputs, (o) -> o.OutputKey == 'VpcId'
+            vpcId = vpcOutput.OutputValue
+
+            role = appToRole[application]
+
+            @_getRoleStacks environment, role, vpcId, (err, roleStacks) =>
+                appVersion =
+                    Name: application,
+                    Version: version
+
+                versionString = getVersionString [appVersion]
+
+                stackName = "#{role}-#{versionString}-#{environment}-#{vpcId}"
+
+                roleStacks = roleStacks.filter (stack) -> stack.StackName == stackName
+
+                if roleStacks.length != 1
+                    return cb(new Error("Unable to find #{application} #{version} in #{environment}, can't destroy"))
+
+                stack = roleStacks[0]
+
+                if !stack.StackStatus.match(/rollback/i)
+                    return cb(new Error("Deploy did not fail, can't destroy"))
+
+                @_deleteStack role, stack, cb
+
         return true
 
     getHistory: (appVersion, environment) ->
@@ -507,7 +546,7 @@ module.exports = class Deployment
                         console.log "Finished starting delete of #{oldVersions}"
                         cb(null, oldStacks) if cb?
 
-    _enableOldVersion: (environment, role, vpcId, cb) ->
+    _enableOldVersion: (environment, role, vpcId, debug, cb) ->
         @_getRoleStacks environment, role, vpcId, (err, roleStacks) =>
             console.log "Error getting stacks #{err}" if err? and cb?
             return cb(err, null) if err? and cb?
@@ -540,11 +579,11 @@ module.exports = class Deployment
                         cb(errorMessage,  null) if cb?
                         return
 
-                    console.log "Deleting stack #{_.find(currentStack.Tags, (t) -> t.Key == 'Name').Value} for #{role}"
-
                     @_waitForInService role, lastVersionStack, (err, data) =>
                         return cb(err, null) if err?
-                        @_deleteStack role, currentStack, cb
+                        unless debug?
+                            console.log "Deleting stack #{_.find(currentStack.Tags, (t) -> t.Key == 'Name').Value} for #{role}"
+                            @_deleteStack role, currentStack, cb
 
     _areInstancesInService: (role, stack, cb) ->
         loadBalancer = _.find(stack.Parameters, (p) -> p.ParameterKey == camelCaseAppName(role) + 'LoadBalancer')
@@ -714,7 +753,7 @@ module.exports = class Deployment
                     'time': moment()
                 @history[name].push(message)
 
-    _deploy: (filter, environment, appVersions, role, token, cb) ->
+    _deploy: (filter, environment, appVersions, role, token, debug, cb) ->
         pushStatus = @_getPushStatus appVersions, environment
         template = roleToTemplate[role]
         return if @_checkCancel(appVersions, environment)
@@ -785,6 +824,7 @@ module.exports = class Deployment
                         StackName: "#{role}-#{versionString}-#{environment}-#{vpcId}",
                         TemplateBody: templateBody,
                         Parameters: params,
+                        DisableRollback: debug,
                         NotificationARNs: [@eventListener.getSnsArn()],
                         Capabilities: ['CAPABILITY_IAM'],
                         Tags: tags }
@@ -820,7 +860,8 @@ module.exports = class Deployment
                                 console.log "Encountered error while creating stack"
                                 pushStatus("Encountered error while creating stack")
                                 @_enableOldVersion environment, role, vpcId, () =>
-                                    @_deleteStack role, parem, (err, data) ->
+                                    unless debug?
+                                        @_deleteStack role, parem, (err, data) ->
 
                             pushStatus("Stack creation in process")
                             cb(err, appVersions) if cb?

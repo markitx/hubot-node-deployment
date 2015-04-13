@@ -9,11 +9,12 @@
 #   hubot bastion info [environment] - Returns info about bastion hosts running in an environment
 #   hubot bastion start [environment] - Starts any unrunning bastion hosts in an environment
 #   hubot bastion stop [environment] - Stops any unrunning bastion hosts in an environment
-#   hubot deploy <application> <version> to <environment> - Deploys the specified application with the specified version to the specified environment
+#   hubot deploy <application> <version> to <environment> [debug] - Deploys the specified application with the specified version to the specified environment. Specifying debug at the end will leave failed stacks in place
 #   hubot cancel <application> <version> to <environment> - Cancel a deploy (Does not work with deploy-multiple)
 #   hubot history <application> <version> in <environment> - Get the history of status for a deploy
 #   hubot status <application> <version> in <environment> - Get the latest status for a deploy
-#   hubot deploy-multiple [<application> <version>, <application> <version>, ...] to <environment> - Deploys the specified application with the specified version to the specified environment
+#   hubot destroy <application> <version> in <environment> - Finds a specific deployed version and, if found, deletes that deployment. Will only work if the deploy being destroyed failed.
+#   hubot deploy-multiple [<application> <version>, <application> <version>, ...] to <environment> [debug] - Deploys the specified application with the specified version to the specified environment. Specifying debug at the end will leave failed stacks in place
 #   hubot clean-up <application> in <environment> - Terminates all other versions of application in environment.  Use after making sure your deploy looks good
 #   hubot cleanup <application> in <environment> - Terminates all other versions of application in environment.  Use after making sure your deploy looks good
 #   hubot rollback <application> in <environment> - Rolls back to the previous version of the application that was deployed
@@ -94,10 +95,12 @@ putToken = (new_tokens, cb) ->
 module.exports = (robot) ->
   getTokens (tokens) ->
 
-    robot.respond /deploy (.+) (.*) to (.+)/i, (msg) ->
+    robot.respond /deploy (.+) (.*) to ([^\s]+)\s*(debug)?/i, (msg) ->
       application = escape(msg.match[1].trim())
       version = escape(msg.match[2].trim())
       environment = escape(msg.match[3].trim())
+      debug = escape(msg.match[3].trim()) == 'debug'
+
       sendToRoom = getSendToRoom(msg)
 
       unless application? and version? and environment?
@@ -114,7 +117,7 @@ module.exports = (robot) ->
         Name: application,
         Version: version
       pushStatus = deployer._getPushStatus [appVersion], environment
-      events = deployer.deploy environment, application, version, token, (err, data) ->
+      events = deployer.deploy environment, application, version, token, debug, (err, data) ->
         if err?
           errorMessage = "Error deploying #{application} #{version} to #{environment}: #{err}"
           pushStatus errorMessage
@@ -171,11 +174,13 @@ module.exports = (robot) ->
           sendToRoom "Deauthorized #{ipAddress}'s access to development."
 
 
-    robot.respond /deploy-multiple \[(.+)\] to (.+)/i, (msg) ->
+    robot.respond /deploy-multiple \[(.+)\] to ([^\s]+)\s*(debug)?/i, (msg) ->
       applications = msg.match[1].trim()
       environment = msg.match[2].trim()
-      sendToRoom = getSendToRoom(msg)
 
+      debug = msg.match[3].trim() == 'debug'
+
+      sendToRoom = getSendToRoom(msg)
 
       unless applications? and environment?
         return sendToRoom("Usage: deploy-multiple [<application> <version>, <application> <version>, ...] to <environment>")
@@ -196,7 +201,7 @@ module.exports = (robot) ->
 
       getDeployString = (versions) -> (versions.map (av) -> "#{av.Name}-#{av.Version}").join(',')
 
-      events = deployer.deployMultiple environment, appVersions, token, (err, data) ->
+      events = deployer.deployMultiple environment, appVersions, token, debug, (err, data) ->
         versions = data || appVersions
         deployString = getDeployString(versions)
         return sendToRoom("Error deploying #{deployString} to #{environment}: #{err}") if err?
@@ -234,6 +239,20 @@ module.exports = (robot) ->
 
       deployer.preserve environment, application, (err, data) ->
         sendToRoom("Preserved #{application} in #{environment}")
+
+    robot.respond /destroy (.+) (.*) in (\w+)/i, (msg) ->
+      application = escape(msg.match[1].trim())
+      version = escape(msg.match[2].trim())
+      environment = escape(msg.match[3].trim())
+      sendToRoom = getSendToRoom(msg)
+      unless application? and version? and environment?
+        return sendToRoom("Usage: destroy <application> <version> in <environment>")
+
+      deployer.destroyDeploy environment, application, version, (err, data) ->
+        if err?
+          sendToRoom("Failed to destroy #{application} #{version} in #{environment}: #{err}")
+        else
+          sendToRoom("Destroyed #{application} #{version} in #{environment}")
 
     robot.respond /version (\S+)(?: in )?(\S+)?/i, (msg) ->
       application = msg.match[1]
