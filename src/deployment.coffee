@@ -57,8 +57,8 @@ deployer = new Deployment()
 bastion = new Bastion()
 s3 = new AWS.S3()
 
-tokenBucket = process.env.HUBOT_DEPLOYMENT_TOKEN_BUCKET || 'markitx-tokens';
-defaultTokenUser = process.env.HUBOT_DEPLOYMENT_DEFAULT_TOKEN_USER || 'markitx-services';
+tokenBucket = process.env.HUBOT_DEPLOYMENT_TOKEN_BUCKET;
+defaultTokenUser = process.env.HUBOT_DEPLOYMENT_DEFAULT_TOKEN_USER;
 
 getEnvironment = (environment) ->
   return environment if environment
