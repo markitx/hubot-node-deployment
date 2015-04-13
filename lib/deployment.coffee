@@ -193,7 +193,7 @@ module.exports = class Deployment
 
             @_enableOldVersion environment, role, vpcId, false, cb
 
-    deployMultiple: (environment, appVersions, token, false, cb) ->
+    deployMultiple: (environment, appVersions, token, deploy, cb) ->
         filter = new EventFilter(@eventListener)
 
         roles = _.groupBy(appVersions, (av) -> appToRole[av.Name])
