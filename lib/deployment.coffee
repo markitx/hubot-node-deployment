@@ -411,9 +411,7 @@ module.exports = class Deployment
 
     _deauthorizeIpAddress: (ipAddress, securityGroupId, cb) ->
         params = {
-            CidrIp: "#{ipAddress}/32",
             DryRun: false,
-            FromPort: 443,
             GroupId: securityGroupId,
             IpPermissions: [
                 {
@@ -426,9 +424,7 @@ module.exports = class Deployment
                     ],
                     ToPort: 443
                 }
-            ],
-            IpProtocol: 'tcp',
-            ToPort: 443
+            ]
         }
         @ec2.revokeSecurityGroupIngress params, (err, data) ->
             if err 
@@ -437,9 +433,7 @@ module.exports = class Deployment
 
     _authorizeIpAddress: (ipAddress, securityGroupId, cb) ->
         params = {
-            CidrIp: "#{ipAddress}/32",
             DryRun: false,
-            FromPort: 443,
             GroupId: securityGroupId,
             IpPermissions: [
                 {
@@ -452,9 +446,7 @@ module.exports = class Deployment
                     ],
                     ToPort: 443
                 }
-            ],
-            IpProtocol: 'tcp',
-            ToPort: 443
+            ]
         }
         @ec2.authorizeSecurityGroupIngress params, (err, data) ->
             if err 
